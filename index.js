@@ -1,102 +1,143 @@
 import './config.js';
-import { Client, LocalAuth } from 'whatsapp-web.js';
-import qrcode from 'qrcode-terminal';
-import express from 'express';
+import makeWASocket, {
+    useMultiFileAuthState,
+    DisconnectReason,
+    fetchLatestBaileysVersion,
+    makeCacheableSignalKeyStore,
+    Browsers
+} from '@whiskeysockets/baileys';
+import { Boom } from '@hapi/boom';
+import pino from 'pino';
 import chalk from 'chalk';
-import { loadPlugins, getPlugin } from './lib/loader.js';
-import { isOwner } from './lib/helper.js';
+import express from 'express';
+import { readdirSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// ─── Keep-alive Server ────────────────────────────────────────────────────────
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send(`🤖 ${global.namebot} is running!`));
+app.get('/', (_, res) => res.send(`🤖 ${global.namebot} is running!`));
 app.listen(PORT, () => console.log(chalk.cyan(`🌐 Server on port ${PORT}`)));
 
-await loadPlugins();
+// ─── Load Plugins ─────────────────────────────────────────────────────────────
+const plugins = new Map();
 
-const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: {
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process',
-            '--disable-gpu'
-        ]
+async function loadPlugins() {
+    const dir = join(__dirname, 'plugins');
+    const files = readdirSync(dir).filter(f => f.endsWith('.js'));
+    for (const file of files) {
+        const mod = await import(`./plugins/${file}`);
+        const plugin = mod.default;
+        if (plugin?.commands) {
+            for (const cmd of plugin.commands) {
+                plugins.set(cmd, plugin);
+            }
+            console.log(chalk.green(`🔌 Loaded: ${file}`));
+        }
     }
-});
+    console.log(chalk.cyan(`✅ ${plugins.size} commands loaded!`));
+}
 
-client.on('qr', (qr) => {
-    console.log(chalk.yellow('\n📱 Scan QR Code:\n'));
-    qrcode.generate(qr, { small: true });
-});
+// ─── Helper ───────────────────────────────────────────────────────────────────
+function isOwner(jid) {
+    const num = jid.replace(/[^0-9]/g, '');
+    return global.owner.some(([n]) => n === num);
+}
 
-client.on('ready', () => {
-    console.log(chalk.green(`\n✅ ${global.namebot} is ready!\n`));
-});
+// ─── Start Bot ────────────────────────────────────────────────────────────────
+async function startBot() {
+    await loadPlugins();
 
-client.on('authenticated', () => {
-    console.log(chalk.blue('🔐 Authenticated successfully'));
-});
+    const { state, saveCreds } = await useMultiFileAuthState('./sessions');
+    const { version } = await fetchLatestBaileysVersion();
 
-client.on('auth_failure', (msg) => {
-    console.error(chalk.red('❌ Auth failed:', msg));
-});
+    const sock = makeWASocket({
+        version,
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
+        },
+        browser: Browsers.ubuntu('Chrome'),
+        logger: pino({ level: 'silent' }),
+        printQRInTerminal: false,
+        generateHighQualityLinkPreview: true,
+    });
 
-client.on('disconnected', (reason) => {
-    console.log(chalk.red('🔌 Disconnected:', reason));
-    client.initialize();
-});
-
-client.on('message', async (msg) => {
-    try {
-        const body    = msg.body.trim();
-        const from    = msg.from;
-        const number  = from.replace('@c.us', '').replace('@g.us', '');
-        const owner   = isOwner(number);
-        const isGroup = from.endsWith('@g.us');
-        const ctx     = { client, config: global, isOwner: owner, isGroup };
-
-        if (msg.type === 'list_response') {
-            const selectedId = msg.selectedRowId;
-            console.log(chalk.magenta(`📋 List select: ${selectedId}`));
-            const plugin = getPlugin(selectedId);
-            if (plugin) await plugin.execute(client, msg, [], ctx);
-            return;
-        }
-
-        if (!body.startsWith(global.prefix)) return;
-
-        const args    = body.slice(global.prefix.length).trim().split(/\s+/);
-        const command = args.shift().toLowerCase();
-
-        console.log(chalk.cyan(`📩 Command: ${command} | from: ${number}`));
-
-        const plugin = getPlugin(command);
-
-        if (!plugin) {
-            return await msg.reply(
-                `❓ Unknown command: *${command}*\n` +
-                `Type *${global.prefix}menu* to see all commands.`
-            );
-        }
-
-        if (plugin.ownerOnly && !owner) {
-            return await msg.reply('⛔ *This command is for the owner only!*');
-        }
-
-        if (plugin.groupOnly && !isGroup) {
-            return await msg.reply('⛔ *This command works in groups only!*');
-        }
-
-        await plugin.execute(client, msg, args, ctx);
-
-    } catch (err) {
-        console.error(chalk.red('❌ Error:'), err);
-        await msg.reply(global.eror).catch(() => {});
+    // ── Pairing Code ─────────────────────────────────────────────────────────
+    if (!sock.authState.creds.registered) {
+        setTimeout(async () => {
+            const code = await sock.requestPairingCode(String(global.pairingNumber));
+            console.log(chalk.yellow(`\n🔑 Pairing Code: ${code}\n`));
+        }, 3000);
     }
-});
 
-client.initialize();
+    // ── Connection ───────────────────────────────────────────────────────────
+    sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
+        if (connection === 'close') {
+            const shouldReconnect = new Boom(lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log(chalk.red('🔌 Disconnected!'));
+            if (shouldReconnect) {
+                console.log(chalk.yellow('🔄 Reconnecting...'));
+                startBot();
+            }
+        } else if (connection === 'open') {
+            console.log(chalk.green(`\n✅ ${global.namebot} Connected!\n`));
+        }
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    // ── Messages ─────────────────────────────────────────────────────────────
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return;
+
+        for (const msg of messages) {
+            if (!msg.message) continue;
+            if (msg.key.fromMe) continue;
+
+            const from = msg.key.remoteJid;
+            const isGroup = from.endsWith('@g.us');
+            const sender = isGroup ? msg.key.participant : from;
+            const owner = isOwner(sender);
+
+            // نص الرسالة
+            const body = msg.message?.conversation
+                || msg.message?.extendedTextMessage?.text
+                || msg.message?.imageMessage?.caption
+                || msg.message?.videoMessage?.caption
+                || '';
+
+            if (!body.startsWith(global.prefix)) continue;
+
+            const args = body.slice(global.prefix.length).trim().split(/\s+/);
+            const command = args.shift().toLowerCase();
+
+            console.log(chalk.cyan(`📩 ${command} | from: ${sender}`));
+
+            const plugin = plugins.get(command);
+            if (!plugin) {
+                await sock.sendMessage(from, {
+                    text: `❓ Unknown command: *${command}*\nType *${global.prefix}menu* to see all commands.`
+                }, { quoted: msg });
+                continue;
+            }
+
+            if (plugin.ownerOnly && !owner) {
+                await sock.sendMessage(from, { text: '⛔ *Owner only!*' }, { quoted: msg });
+                continue;
+            }
+
+            try {
+                await plugin.execute(sock, msg, { from, sender, args, isGroup, owner, body });
+            } catch (err) {
+                console.error(chalk.red('❌ Error:'), err);
+                await sock.sendMessage(from, { text: global.eror }, { quoted: msg });
+            }
+        }
+    });
+}
+
+startBot();
