@@ -1,5 +1,5 @@
 {
-  "name": "whatsapp-bot-pro",
+  "name": "riomen-bot",
   "version": "1.0.0",
   "description": "ℝ𝕀𝕆𝕄𝔼ℕ WhatsApp Bot",
   "main": "index.js",
@@ -8,12 +8,14 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
+    "@whiskeysockets/baileys": "^6.7.0",
+    "axios": "^1.6.0",
     "chalk": "^5.3.0",
-    "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.23.0"
+    "express": "^4.18.2",
+    "pino": "^8.15.0",
+    "qrcode-terminal": "^0.12.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   }
 }
