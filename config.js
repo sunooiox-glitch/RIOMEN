@@ -2,30 +2,29 @@ import { watchFile, unwatchFile } from 'fs';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 
-global.pairingNumber = 212773608927;
+// ─── Owner ────────────────────────────────────────────────────────────────────
+global.pairingNumber = 212703979081;
 global.owner = [
   ['33759850405',  'ℝ𝕀𝕆𝕄𝔼ℕ', true],
   ['212773608927', 'ℝ𝕀𝕆𝕄𝔼ℕ', true],
 ];
 
+// ─── Bot Info ─────────────────────────────────────────────────────────────────
 global.namebot  = 'ℝ𝕀𝕆𝕄𝔼ℕ';
 global.author   = 'ℝ𝕀𝕆𝕄𝔼ℕ';
-global.prefix   = '!';
-global.source   = 'https://github.com/riomen/whatsapp-bot';
+global.prefix   = '.';
+global.source   = 'https://github.com/sunooiox-glitch/RIOMEN-BOT';
 
-global.wait  = '⏳ Loading... | جاري التحميل';
-global.eror  = '❌ Error occurred | وقع خطأ';
-global.done  = '✅ Done! | تم بنجاح';
+// ─── Messages ─────────────────────────────────────────────────────────────────
+global.wait  = '⏳ *Loading...* | جاري التحميل';
+global.eror  = '❌ *Error!* | وقع خطأ';
+global.done  = '✅ *Done!* | تم بنجاح';
 
-global.stickpack = namebot;
-global.stickauth = author;
+// ─── Sticker ──────────────────────────────────────────────────────────────────
+global.stickpack = global.namebot;
+global.stickauth = global.author;
 
-global.limits = {
-    download: 50,
-    sticker:  5,
-    ai:       100,
-};
-
+// ─── Emoji ────────────────────────────────────────────────────────────────────
 global.emoji = {
     owner:    '👑',
     admin:    '🛡️',
@@ -33,22 +32,17 @@ global.emoji = {
     bot:      '🤖',
     success:  '✅',
     error:    '❌',
-    warning:  '⚠️',
     loading:  '⏳',
     download: '📥',
     sticker:  '🖼️',
-    ai:       '🧠',
     music:    '🎵',
     video:    '🎬',
-    group:    '👥',
-    religion: '🕌',
-    fun:      '🎮',
-    info:     'ℹ️',
 };
 
+// ─── Auto Reload ──────────────────────────────────────────────────────────────
 let file = fileURLToPath(import.meta.url);
 watchFile(file, () => {
     unwatchFile(file);
-    console.log(chalk.redBright("Update 'config.js'"));
+    console.log(chalk.redBright("♻️ config.js updated!"));
     import(`${file}?update=${Date.now()}`);
 });
